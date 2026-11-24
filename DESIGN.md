@@ -501,3 +501,12 @@ Console-only elements are in `cli/graphics.py`: `Style` (ANSI colors, team and a
 | Structured output of objects | `Renderable` / `Renderer`, `Table` |
 | Saving state and results | `DraftGame.save/load`, autosave, `_results`, `JsonSaveStore` |
 | Loading data from the server | `OpenDotaClient` (REST + explorer SQL), `parse_heroes`, `parse_lanes`, `CachedHeroSource` |
+
+| Requirement (practice 14, business logic) | Where |
+|---|---|
+| All the math of the draft, described in the document | 5.1 matchups and synergy, 5.2 positions, 5.3 draft score, 5.4 bot; code in `Matchups`, `positions.py`, `Evaluator`, `DraftBot` |
+| Step-by-step game with actions | `Draft` with the Captains Mode / All Pick order of `Step`s, `DraftGame.human_move/bot_move/undo` |
+| History of the steps | `Draft.steps`, the `history` command |
+| Saving the game state | `Draft.to_dict/from_dict`, `DraftGame.save/load`, autosave |
+| Loading new heroes | `HeroSource` interface; `CachedHeroSource` downloads the heroes of a new patch, `refresh` downloads them again |
+| Core with no links to other layers | `core` imports nothing from `cli` or `data`; `HeroSource` and `SaveStore` are implemented in `data` |
