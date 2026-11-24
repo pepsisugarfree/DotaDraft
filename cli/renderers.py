@@ -37,8 +37,6 @@ class HeroRenderer(Renderer):
         lines += ["", "Positions (guessed part of games):"]
         for position, share in position_shares(hero).items():
             lines.append(f"  {position} {POSITIONS[position]:<8} {s.dim(bar(share, 1, 20))} {share * 100:>3.0f}%")
-        lines.append("")
-        lines.append(f"Image: {hero.image_url or '-'}")
         return "\n".join(lines)
 
 

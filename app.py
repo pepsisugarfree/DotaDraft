@@ -5,7 +5,7 @@ from cli.facade import USER_ERRORS
 from cli.renderers import DraftRenderer, EvaluationRenderer, HeroRenderer
 from cli.strategies import DraftCommands, InfoCommands, SystemCommands, download_patch_stats
 from core import AUTOSAVE, Draft, DraftEvaluation, DraftGame, Hero, HeroPool, Matchups
-from data import CachedHeroSource, JsonFiles, JsonSaveStore, OpenDotaClient
+from data import CachedHeroSource, JsonFiles, JsonSaveStore, OpenDotaClient, PortraitCache
 
 DEFAULT_DATA_DIR = Path.home() / ".dotadraft"
 
@@ -13,10 +13,12 @@ DEFAULT_DATA_DIR = Path.home() / ".dotadraft"
 class App:
     """Puts the layers together: data -> core -> console interface."""
 
-    def __init__(self, console, data_dir=DEFAULT_DATA_DIR, colors=True, source=None, rng=None):
+    def __init__(self, console, data_dir=DEFAULT_DATA_DIR, colors=True, source=None, rng=None, portraits=None):
         data_dir = Path(data_dir)
         if source is None:
-            source = CachedHeroSource(OpenDotaClient(), JsonFiles(data_dir / "cache"))
+            client = OpenDotaClient()
+            source = CachedHeroSource(client, JsonFiles(data_dir / "cache"))
+            portraits = PortraitCache(client, data_dir / "images")
         self.source = source
         pool = HeroPool(source)
         store = JsonSaveStore(JsonFiles(data_dir / "saves"))
@@ -29,9 +31,9 @@ class App:
 
         self.cli = CLI(console, style)
         self.cli.prompt = self.prompt
-        self.cli.use_strategy(InfoCommands(self.cli, self.game))
+        self.cli.use_strategy(InfoCommands(self.cli, self.game, portraits))
         self.cli.use_strategy(DraftCommands(self.cli, self.game))
-        self.cli.use_strategy(SystemCommands(self.cli, self.game, source))
+        self.cli.use_strategy(SystemCommands(self.cli, self.game, source, portraits))
 
     def prompt(self):
         draft = self.game.draft

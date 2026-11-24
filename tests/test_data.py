@@ -3,8 +3,9 @@ import urllib.error
 
 import pytest
 
-from data import CachedHeroSource, JsonFiles, JsonSaveStore, OpenDotaClient, parse_heroes, parse_lanes
+from data import CachedHeroSource, JsonFiles, JsonSaveStore, OpenDotaClient, PortraitCache, parse_heroes, parse_lanes
 from data.opendota import WINDOW, add_matchup_rows, latest_patch
+from tests.conftest import PICTURE, FakeImageClient, make_heroes
 
 PATCH_START = 1_700_000_000
 NEWEST_ID = 3 * WINDOW + 500
@@ -159,3 +160,54 @@ def test_hero_ignores_unknown_fields():
     hero = Hero.from_dict({"id": 1, "name": "Axe", "key": "axe", "attribute": "str",
                            "attack_type": "Melee", "roles": ["Durable"], "pro_bans": 3})
     assert hero.aliases == () and not hasattr(hero, "roles")
+
+
+def test_portrait_is_downloaded_once(tmp_path):
+    client = FakeImageClient()
+    hero = make_heroes()[0]
+    path = PortraitCache(client, tmp_path).portrait(hero)
+    assert path == tmp_path / "anti-mage.png" and path.read_bytes() == PICTURE
+    assert PortraitCache(client, tmp_path).portrait(hero) == path
+    assert client.downloads == ["https://img/1.png"]
+
+
+def test_hero_without_image_has_no_portrait(tmp_path):
+    hero = make_heroes()[0]
+    hero.image_url = ""
+    assert PortraitCache(FakeImageClient(), tmp_path).portrait(hero) is None
+
+
+def test_broken_portrait_is_not_saved(tmp_path):
+    hero = make_heroes()[0]
+    cache = PortraitCache(FakeImageClient(broken=[hero.image_url]), tmp_path)
+    with pytest.raises(ConnectionError, match="broken"):
+        cache.portrait(hero)
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_download_all_portraits(tmp_path):
+    client = FakeImageClient()
+    heroes = make_heroes()
+    cache = PortraitCache(client, tmp_path)
+    cache.portrait(heroes[0])
+    progress = []
+    assert cache.download_all(heroes, lambda done, total: progress.append((done, total))) == len(heroes) - 1
+    assert progress[-1] == (len(heroes) - 1, len(heroes) - 1)
+    assert cache.missing(heroes) == []
+    cache.clear()
+    assert cache.missing(heroes) == heroes
+
+
+def test_client_downloads_bytes(monkeypatch):
+    class Answer(io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+    monkeypatch.setattr("urllib.request.urlopen", lambda request, timeout: Answer(b'{"a": 1}'))
+    client = OpenDotaClient()
+    assert client.download("https://img/1.png") == b'{"a": 1}'
+    assert client.get("heroStats") == {"a": 1}
+

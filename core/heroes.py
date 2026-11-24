@@ -58,6 +58,14 @@ class HeroSource(ABC):
         """{ally_id: (games together, wins together)}"""
 
 
+class PortraitStore(ABC):
+    """Gives a local file with the hero's picture. The data layer implements it."""
+
+    @abstractmethod
+    def portrait(self, hero):
+        """Path to the picture, or None if the hero has none."""
+
+
 def simplify(text):
     return re.sub(r"[^a-z0-9]", "", text.lower())
 

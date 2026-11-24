@@ -158,6 +158,10 @@ classDiagram
         +load(name)
         +names()
     }
+    class PortraitStore {
+        <<interface>>
+        +portrait(hero)
+    }
     DraftGame o-- Draft
     DraftGame o-- DraftBot
     DraftGame o-- Evaluator
@@ -174,6 +178,8 @@ classDiagram
     CachedHeroSource o-- OpenDotaClient
     CachedHeroSource o-- JsonFiles
     JsonSaveStore o-- JsonFiles
+    PortraitStore <|.. PortraitCache
+    PortraitCache o-- OpenDotaClient
 ```
 
 What happens on `pick axe` when Dire is a bot:
@@ -200,7 +206,7 @@ sequenceDiagram
 
 - **Strategies in a CLI facade.** Commands are split into three groups the way the task suggests: output (Info), actions that change the game (Draft) and infrastructure (System). A new group is a new class plus one `use_strategy` call, the CLI itself doesn't change. The CLI refuses a command name that two strategies register.
 - **Renderable + Renderer.** I picked the second variant from the task: core classes are `Renderable`, the `Renderer` interface is also in the core, and the CLI implements it. The core knows nothing about colors or tables, and the GUI will set its own renderers later.
-- **Interfaces for data.** The core defines `HeroSource` and `SaveStore`, the data layer implements them. The tests use a fake source with 26 heroes and made-up matchups, without internet.
+- **Interfaces for data.** The core defines `HeroSource`, `SaveStore` and `PortraitStore`, the data layer implements them. The tests use a fake source with 26 heroes and made-up matchups, without internet.
 - **Console abstraction.** `Console` has `TerminalConsole` and `MemoryConsole`, so the whole CLI is tested with prepared input.
 - **Divine+ public matches of the current patch, counted on OpenDota's side.** OpenDota's `/heroes/{id}/matchups` has only pro matches (20-100 games per pair) and doesn't care about the patch. Instead the app sends SQL to OpenDota's explorer and lets their database count every pair of heroes - against each other and in one team - in public matches since the current patch came out, with an average rank of Divine or higher (`avg_rank_tier >= 70`, ~8% of all games). Low ranks were left out on purpose: there a draft matters less than how people play. A query is limited to 15 seconds, so the matches are split into windows of 800 000 match ids, two queries per window (~30 seconds). After the first week of patch 7.42 that is ~300 000 matches; a usual pair has ~650 games. It is downloaded once on the first start and then with `refresh`.
 - **Saves keep steps, not the board.** A draft is saved as its list of steps, the board is rebuilt from it. This also gives the history of steps for free.
@@ -209,7 +215,7 @@ sequenceDiagram
 
 ### 4.1 Data Description
 
-All files are in `~/.dotadraft` (or the folder given with `--data=DIR`):
+All files are in `~/.dotadraft` (or the folder given with `--data=DIR`). A folder in the user's home whose name starts with a dot is the usual place for the files of a console app on every system. The folder where the app itself lies may be read-only, or it may be replaced by a new version.
 
 | File | What is inside |
 |---|---|
@@ -217,8 +223,7 @@ All files are in `~/.dotadraft` (or the folder given with `--data=DIR`):
 | `cache/patch.json` | version, patch name, its start time, number of matches, `pairs` - `[hero, enemy, games, wins]` and `allies` - `[hero, ally, games together, wins together]` from Divine+ matches of the patch |
 | `saves/<name>.json` | one saved draft; `autosave` is written on exit and loaded on start |
 | `saves/_results.json` | results of all finished drafts |
-
-Files are written to a `.tmp` file first and then renamed, so a crash doesn't break them.
+| `images/<key>.png` | hero portraits from Valve's CDN (`skeleton_king.png`, ~70 KB each, ~9 MB for all heroes) |
 
 Save example:
 
@@ -232,7 +237,33 @@ Save example:
 }
 ```
 
-### 4.2 Data Dictionary
+### 4.2 Persistence
+
+Two kinds of files are kept between runs:
+
+- **Serialized objects, as JSON.** JSON is the format OpenDota already answers in, it is compact and Python reads it without extra packages. A database would be too much here: the app keeps a few files, never searches inside them and is used by one person.
+- **Raw bytes, as PNG files.** The portraits are saved exactly as the server sent them.
+
+What is written and when:
+
+| What | Who writes it | When it is written | When it is read |
+|---|---|---|---|
+| hero list | `CachedHeroSource` | on the first start and on `refresh` | every start |
+| patch stats | `CachedHeroSource` | on the first start and on `refresh` | when a matchup is needed for the first time |
+| draft save | `DraftGame.save` through `JsonSaveStore` | `save [name]`; `autosave` on exit, also after a single command run from the program arguments | `load [name]`; `autosave` on start |
+| results | `DraftGame` | once, when a draft is over (removed again by `undo`) | `results` |
+| portraits | `PortraitCache` | the first time a hero is shown, or all at once with `portraits` | before downloading, to skip what is already there |
+
+Rules for all of them:
+
+- **Atomic writes.** A file is written as `.tmp` first and then renamed over the old one, so a crash or Ctrl+C never leaves half a file.
+- **Cache version.** `heroes.json` and `patch.json` have `"version": 6`. When the format changes, the number is raised and old files are downloaded again instead of crashing. `Hero.from_dict` also ignores fields it doesn't know.
+- **A save keeps the steps, not the board.** `Draft.to_dict` writes the format, who picks first and the list of steps; `Draft.from_dict` builds the draft again from them. Players, bot level and whether the result was written are saved next to it, so after `load` the game goes on from the same step.
+- **Continue from the last save.** On start the app loads `autosave`. If that draft is not over, it says "Continuing the last draft".
+- **Portraits are a buffer.** `PortraitCache.portrait(hero)` returns the local file. Only if there is no file, it downloads the picture, checks that it really is a PNG and writes it. Each picture is downloaded once, and the app works offline with them later. A new hero of a new patch is downloaded the first time it is shown. `portraits --again` deletes the pictures and downloads them all again (if Valve changes the art).
+- **Names starting with `_`** are reserved for the app's own files (`_results`), the user can't save or load them.
+
+### 4.3 Data Dictionary
 
 | Entity | Fields / methods |
 |---|---|
@@ -243,6 +274,7 @@ Save example:
 | `DraftFormat` | `key`, `title`, `order` - list of (first/second, pick/ban) |
 | `Hero` | `id`, `name`, `key`, `attribute`, `attack_type`, `aliases`, `image_url`, `games`, `wins`, `lanes`; `winrate` |
 | `HeroPool` | `all`, `get(id)`, `find(text)`, `filter(role, attribute)`, `refresh` |
+| `PortraitCache` | `root`; `portrait(hero)` -> local file, `missing(heroes)`, `download_all(heroes, on_progress)`, `clear()` |
 | `Matchups` | `strength(id)`, `expected(a, b)`, `winrate(a, b)`, `advantage(a, b)`, `synergy(a, b)`, `best_allies(id)`, `counters_of(id)`, `good_against(id)` |
 | `Step` | `team`, `action`, `hero_id`, `position` |
 | `TeamScore` | `counters`, `synergy`, `strength`, `positions`, `composition`, `roles`, `problems`; `total` |
@@ -470,7 +502,7 @@ Radiant outdrafted Dire!
 | Group | Command | What it does |
 |---|---|---|
 | Info | `heroes [--pos=P] [--attr=A]` | table of heroes with roles and traits, filter by position (1-5, carry, mid, offlane) and attribute |
-| | `hero <name>` | roles, traits, winrate in the patch, lanes, part of games on each position, image link |
+| | `hero <name>` | roles, traits, winrate in the patch, lanes, part of games on each position, local portrait file (downloaded the first time) |
 | | `counters <hero>` | who is good against the hero, whom it is good against and with whom it works well |
 | | `meta [count]` | heroes with the best winrate in the patch |
 | | `board` / `history` | current draft / all steps |
@@ -482,6 +514,7 @@ Radiant outdrafted Dire!
 | | `auto` | the bot makes this step |
 | | `undo` | take back the last human step |
 | System | `refresh` | download fresh stats of the current patch with a progress bar |
+| | `portraits [--again]` | download portraits of all heroes with a progress bar (~10 seconds); `--again` downloads them anew |
 | | `save [name]` / `load [name]` / `saves` | named saves, default `autosave` |
 | | `help` / `exit` | command list / save and quit |
 
@@ -510,3 +543,11 @@ Console-only elements are in `cli/graphics.py`: `Style` (ANSI colors, team and a
 | Saving the game state | `Draft.to_dict/from_dict`, `DraftGame.save/load`, autosave |
 | Loading new heroes | `HeroSource` interface; `CachedHeroSource` downloads the heroes of a new patch, `refresh` downloads them again |
 | Core with no links to other layers | `core` imports nothing from `cli` or `data`; `HeroSource` and `SaveStore` are implemented in `data` |
+
+| Requirement (practice 15, persistence) | Where |
+|---|---|
+| Saving the game state and loading it back | `DraftGame.save/load`, `Draft.to_dict/from_dict`, `JsonSaveStore`, `JsonFiles`; commands `save`, `load`, `saves` |
+| The game goes on from the last save | `autosave` on exit, `App.start` loads it |
+| Hero portraits saved to local files, fewer requests to the server | `PortraitCache`, `OpenDotaClient.download`, command `portraits`, `hero` |
+| Server data cached between runs | `CachedHeroSource` with `cache/heroes.json` and `cache/patch.json` |
+| How it works is described in the document | 4.1 files, 4.2 persistence |

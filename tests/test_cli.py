@@ -5,7 +5,8 @@ import pytest
 from app import App
 from cli import CLI, ArgParser, Command, CommandError, CommandStrategy, MemoryConsole, Style
 from cli.graphics import ANSI_CODE, Table
-from tests.conftest import FakeSource
+from data import PortraitCache
+from tests.conftest import FakeImageClient, FakeSource
 
 
 class EchoCommands(CommandStrategy):
@@ -76,7 +77,7 @@ def test_table_ignores_color_codes():
 def test_hero_info_commands(run_app):
     text = run_app("hero am", "counters axe", "meta 3", "heroes --pos=5 --attr=int", "heroes --pos=support").text
     assert "Anti-Mage  (Agility, Melee)" in text
-    assert "Image: https://img/1.png" in text
+    assert "Portrait: https://img/1.png" in text
     assert "Good against Axe" in text and "Axe is good against" in text
     assert "Crystal Maiden" in text and "Lion" in text and "Anti-Mage  " in text
     assert "heroes" in text
@@ -149,3 +150,23 @@ def test_run_once(tmp_path):
     assert app.run_once("hero pudge") == 0
     assert app.run_once("hero roshan") == 1
     assert "Error: No hero 'roshan'." in console.text
+
+
+def test_portraits(tmp_path):
+    client = FakeImageClient(broken=["https://img/2.png"])
+    console = MemoryConsole(["hero am", "hero axe", "portraits", "portraits"])
+    App(console, tmp_path, colors=False, source=FakeSource(),
+        portraits=PortraitCache(client, tmp_path / "images")).run()
+    text = console.text
+    assert f"Portrait: {tmp_path / 'images' / 'anti-mage.png'}" in text
+    assert "Portrait: https://img/2.png (not downloaded: the picture of Axe is broken" in text
+    assert "Error: the picture of Axe is broken" in text
+
+    client.broken = []
+    console = MemoryConsole(["portraits", "portraits", "portraits --again"])
+    App(console, tmp_path, colors=False, source=FakeSource(),
+        portraits=PortraitCache(client, tmp_path / "images")).run()
+    text = console.text
+    assert "portraits saved to" in text and "All portraits are already in" in text
+    assert text.count("portraits saved to") == 2
+

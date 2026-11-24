@@ -28,14 +28,15 @@ def role_names(hero):
 class InfoCommands(CommandStrategy):
     title = "Info"
 
-    def __init__(self, cli, game):
+    def __init__(self, cli, game, portraits=None):
         self.game = game
         self.pool = game.pool
+        self.portraits = portraits
         super().__init__(cli)
 
     def register_commands(self):
         self.register_command(Command("heroes", "heroes [--pos=P] [--attr=A]", "all heroes, can filter", self.heroes))
-        self.register_command(Command("hero", "hero <name>", "positions, traits, winrate, image", self.hero, 1))
+        self.register_command(Command("hero", "hero <name>", "positions, traits, winrate, portrait", self.hero, 1))
         self.register_command(Command("counters", "counters <hero>", "counters, whom it counters, best allies",
                                       self.counters, 1))
         self.register_command(Command("meta", "meta [count]", "heroes with the best winrate", self.meta))
@@ -63,7 +64,18 @@ class InfoCommands(CommandStrategy):
         self.cli.info(f"{len(heroes)} heroes")
 
     def hero(self, args):
-        self.cli.display(self.pool.find(" ".join(args.positional)))
+        hero = self.pool.find(" ".join(args.positional))
+        self.cli.display(hero)
+        self.cli.print()
+        if self.portraits is None:
+            self.cli.print(f"Portrait: {hero.image_url or '-'}")
+            return
+        try:
+            path = self.portraits.portrait(hero)
+        except ConnectionError as error:
+            self.cli.print(f"Portrait: {hero.image_url} (not downloaded: {error})")
+            return
+        self.cli.print(f"Portrait: {path or '-'}")
 
     def counters(self, args):
         hero = self.pool.find(" ".join(args.positional))
@@ -257,13 +269,16 @@ def download_patch_stats(cli, source):
 class SystemCommands(CommandStrategy):
     title = "System"
 
-    def __init__(self, cli, game, source):
+    def __init__(self, cli, game, source, portraits=None):
         self.game = game
         self.source = source
+        self.portraits = portraits
         super().__init__(cli)
 
     def register_commands(self):
         self.register_command(Command("refresh", "refresh", "download fresh stats of the current patch", self.refresh))
+        self.register_command(Command("portraits", "portraits [--again]", "download pictures of all heroes",
+                                      self.download_portraits))
         self.register_command(Command("save", "save [name]", "save the draft", self.save))
         self.register_command(Command("load", "load [name]", "load a draft (default: last one)", self.load))
         self.register_command(Command("saves", "saves", "list of saves", self.saves))
@@ -276,6 +291,23 @@ class SystemCommands(CommandStrategy):
         count = self.game.pool.refresh()
         self.game.evaluator.matchups.clear()
         self.cli.success(f"Stats of {count} heroes are up to date.")
+
+    def download_portraits(self, args):
+        if self.portraits is None:
+            raise CommandError("Portraits are not available here.")
+        if args.option("again"):
+            self.portraits.clear()
+        heroes = self.game.pool.all()
+        if not self.portraits.missing(heroes):
+            self.cli.info(f"All portraits are already in {self.portraits.root}")
+            return
+        self.cli.info("Downloading hero portraits...")
+        try:
+            count = self.portraits.download_all(heroes, self.cli.progress)
+        except ConnectionError:
+            self.cli.print()
+            raise
+        self.cli.success(f"{count} portraits saved to {self.portraits.root}")
 
     def save(self, args):
         name = args.get(0, "autosave")

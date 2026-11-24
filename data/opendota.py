@@ -19,10 +19,14 @@ class OpenDotaClient:
         self.timeout = timeout
 
     def get(self, path):
-        request = urllib.request.Request(self.base_url + path, headers={"User-Agent": "dota-draft"})
+        return json.loads(self.download(self.base_url + path))
+
+    def download(self, url):
+        """Raw bytes of any link: an answer of the API or a picture."""
+        request = urllib.request.Request(url, headers={"User-Agent": "dota-draft"})
         try:
             with urllib.request.urlopen(request, timeout=self.timeout) as response:
-                return json.load(response)
+                return response.read()
         except urllib.error.HTTPError as error:
             if error.code == 429:
                 raise ConnectionError("OpenDota says too many requests, wait a minute.")

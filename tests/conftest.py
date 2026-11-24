@@ -85,6 +85,23 @@ class FakeSource(HeroSource):
                 for ally, *_ in HERO_LIST if ally != hero_id}
 
 
+PICTURE = b"\x89PNG fake picture"
+
+
+class FakeImageClient:
+    """Gives a picture for every link and counts the downloads."""
+
+    def __init__(self, broken=()):
+        self.downloads = []
+        self.broken = broken
+
+    def download(self, url):
+        self.downloads.append(url)
+        if url in self.broken:
+            return b"<html>not found</html>"
+        return PICTURE
+
+
 @pytest.fixture
 def run_app(tmp_path):
     """Runs the app on the given input lines and returns the console."""
