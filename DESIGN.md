@@ -3,7 +3,7 @@
 
 Name: Ivan
 
-Date: 24.11.2026
+Date: 25.11.2026
 
 ## Summary
 
@@ -14,6 +14,7 @@ Date: 24.11.2026
 - [5 Component Design](#5-component-design)
 - [6 Human Interface Design](#6-human-interface-design)
 - [7 Requirements Matrix](#7-requirements-matrix)
+- [8 Deployment](#8-deployment)
 
 ## 1 Introduction
 
@@ -732,3 +733,35 @@ Console-only elements are in `cli/graphics.py`: `Style` (ANSI colors, team and a
 | Main actions with buttons and clicks | `HeroGrid` + `SidePanel` (Pick / Ban, position, suggestions), header buttons, `NewDraftPage` |
 | Buttons to choose and load saves | `SavesPage`: the list with Load, the "Save as" field and Save |
 | GUI elements described in the document | 3.2 window classes and the click sequence, 3.3 why tkinter and threads, 6.1 the table of widgets, 6.2 screenshots |
+
+| Requirement (practice 17, deployment) | Where |
+|---|---|
+| All parts built into one app ready for the user | `build.py`: `DotaDraft.exe` and `DotaDraft-console.exe`, one file each, in `DotaDraft-windows.zip` |
+| Release and debug builds | `python build.py` and `python build.py --debug`, section 8.2 |
+| Extra build steps and dependencies written down | section 8.1 and README "Windows build" |
+
+## 8 Deployment
+
+### 8.1 Build steps and dependencies
+
+The app is shipped as compiled Windows programs. They are made with PyInstaller - the only extra dependency, it is needed only for the build, not to run the app:
+
+1. Windows 10/11, Python 3.10+ (built with 3.12) with tkinter (comes with the python.org installer).
+2. `python -m pip install pyinstaller` (built with 6.22).
+3. `python build.py` in the root of the repository.
+
+The result is in `dist/`: `DotaDraft.exe`, `DotaDraft-console.exe` and `DotaDraft-windows.zip` with both of them and the README. `build/` and `dist/` are temporary and are not kept in git (`.gitignore`).
+
+The app has no data files of its own: heroes, stats and portraits are downloaded from OpenDota and Valve on the first start and kept in `%USERPROFILE%\.dotadraft` (section 4.2), so the exe works from any folder and an update of the program keeps the saves. Only the standard library of Python is used, so nothing else is put into the exe.
+
+### 8.2 Release and debug
+
+| | Release (`python build.py`) | Debug (`python build.py --debug`) |
+|---|---|---|
+| Form | one file per program (`--onefile`): Python, the libraries (`python312.dll`, `tcl86t.dll`, `tk86t.dll`, ...) and the code are packed inside the exe and unpacked to a temp folder on start | a folder `dist/DotaDraft-debug/` with the exe and next to it `_internal/` with all the dll and Python modules, easy to look into |
+| Console | the window exe has no console (`--windowed`), the console exe has one | the window opens together with a console where errors are printed |
+| Code | compiled with `--optimize 1` (no `assert` checks), tests and pytest are left out, the console exe also leaves out tkinter (8 MB instead of 11 MB) | compiled as it is |
+
+### 8.3 Why two programs
+
+On Windows a program is either a console one or a window one. A window exe has no place to print to, and a console exe opens a black console behind the window. So the same code is built twice: `main.py` as the window program and `main_console.py`, which only adds `--console` to the arguments, as the console program. Both read and write the same `%USERPROFILE%\.dotadraft`, so a draft saved in one can be loaded in the other. The window exe still accepts `--data=DIR`.
