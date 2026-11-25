@@ -250,3 +250,19 @@ def test_result_is_written_once_and_save_load():
     assert game.results() == []
     with pytest.raises(LookupError):
         game.load("nope")
+
+
+def test_competitive_draft_gives_no_hints():
+    game, _ = make_game()
+    game.new("ap", dire="bot", competitive=True)
+    with pytest.raises(ValueError):
+        game.suggestions()
+    with pytest.raises(ValueError):
+        game.bot_move()  # 'auto' for a human team
+    game.human_move("pick", game.pool.find("axe"))
+    assert len(game.play_bots()) == 2  # the bot team still plays (Dire picks twice in All Pick)
+    game.save("ranked")
+    game.new("ap")
+    assert not game.competitive and game.suggestions()
+    game.load("ranked")
+    assert game.competitive

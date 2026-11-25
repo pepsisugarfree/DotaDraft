@@ -86,7 +86,7 @@ def test_hero_info_commands(run_app):
 
 
 def test_draft_with_dialog_against_bot(run_app):
-    text = run_app("new", "ap", "", "", "dire", "hard",
+    text = run_app("new", "ap", "", "", "dire", "hard", "",
                    "pick axe", "suggest 3", "pick sf --pos=2", "history").text
     assert "New All Pick draft. Radiant: human, Dire: bot." in text
     assert "Dire picks" in text
@@ -113,6 +113,17 @@ def test_full_draft_ends_with_result(run_app):
     assert "Radiant chance" in text
 
 
+def test_competitive_draft_has_no_hints(run_app):
+    text = run_app("new --mode=ap --competitive", "suggest", "auto", "pick axe", "board").text
+    assert "Competitive draft: suggest and auto are off" in text
+    assert text.count("Error: Hints are off in a competitive draft.") == 2
+    assert "Radiant picks Axe" in text and "Dire picks" in text  # the bot of Dire still plays
+    assert "no hints in a competitive draft" in text
+    # the mode stays after a restart
+    text = run_app("suggest").text
+    assert "Error: Hints are off in a competitive draft." in text
+
+
 def test_auto_and_undo(run_app):
     text = run_app("new --mode=ap", "auto", "undo", "board").text
     assert "Took back" in text
@@ -124,6 +135,12 @@ def test_draft_continues_after_restart(run_app):
     text = run_app("board", "pick lion").text
     assert "Continuing the last draft" in text
     assert "Dire picks Lion" in text
+
+
+def test_empty_draft_is_not_autosaved(run_app):
+    run_app("new --mode=ap --dire=human")
+    text = run_app("board").text
+    assert "Continuing the last draft" not in text and "No draft yet" in text
 
 
 def test_named_saves(run_app):
@@ -170,3 +187,32 @@ def test_portraits(tmp_path):
     assert "portraits saved to" in text and "All portraits are already in" in text
     assert text.count("portraits saved to") == 2
 
+
+
+def test_main_opens_the_window_by_default(monkeypatch, tmp_path):
+    import gui
+    import main
+
+    started = []
+
+    class FakeApp:
+        def __init__(self, console, data_dir, colors):
+            started.append("console")
+
+        def run(self):
+            pass
+
+        def run_once(self, line):
+            started.append(line)
+            return 0
+
+    monkeypatch.setattr(gui, "run_gui", lambda data_dir: started.append(("window", data_dir)))
+    monkeypatch.setattr(main, "App", FakeApp)
+    main.main([f"--data={tmp_path}"])
+    assert started == [("window", str(tmp_path))]
+    started.clear()
+    main.main(["--console"])
+    assert started == ["console"]
+    started.clear()
+    main.main(["counters", "pudge"])  # one command still runs in the terminal
+    assert started == ["console", "counters pudge"]

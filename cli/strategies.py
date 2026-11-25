@@ -6,9 +6,6 @@ from cli.graphics import Table
 from cli.renderers import percent
 from core import ATTRIBUTES, DIRE, FORMATS, LEVELS, PLAYERS, POSITIONS, RADIANT, TEAMS, roles, traits
 
-EVEN_DRAFT = 0.02  # 48-52% is a draw
-
-
 def positive_number(text, default=None):
     if text is None or text is True:
         return default
@@ -144,6 +141,8 @@ def next_turn_text(style, game):
     team, action = draft.turn
     who = "you" if game.players[team] == "human" else "bot"
     hint = f" - type '{action} <hero>'" if who == "you" else " - type 'auto' to let it move"
+    if game.competitive and who == "you":
+        hint += ", no hints in a competitive draft"
     return f"Next: {style.team(team)} {action}s ({who}){hint}"
 
 
@@ -173,12 +172,15 @@ class DraftCommands(CommandStrategy):
                 "dire": args.option("dire", "bot"),
                 "first": args.option("first", RADIANT),
                 "level": args.option("bot", "normal"),
+                "competitive": bool(args.option("competitive", False)),
             }
         else:
             settings = self._ask_settings()
         draft = self.game.new(**settings)
         players = ", ".join(f"{self.cli.style.team(t)}: {self.game.players[t]}" for t in TEAMS)
         self.cli.success(f"New {draft.format.title} draft. {players}.")
+        if self.game.competitive:
+            self.cli.info("Competitive draft: suggest and auto are off, think by yourself.")
         self._after_move()
 
     def pick(self, args):
@@ -190,6 +192,7 @@ class DraftCommands(CommandStrategy):
 
     def suggest(self, args):
         count = positive_number(args.get(0), 5)
+        self.game.check_hints()
         team, action = self.game.current().turn
         self.cli.info(f"Best heroes to {action} for {team.title()} now:")
         table = Table(["Hero", "Gain", "Roles"], right_aligned=[1])
@@ -227,7 +230,7 @@ class DraftCommands(CommandStrategy):
             self.cli.display(evaluation)
             winner = evaluation.winner
             loser = DIRE if winner == RADIANT else RADIANT
-            if abs(evaluation.radiant_chance - 0.5) < EVEN_DRAFT:
+            if evaluation.is_even:
                 self.cli.success("The drafts are even, it's up to the players.")
             else:
                 self.cli.success(f"{winner.title()} outdrafted {loser.title()}!")
@@ -244,6 +247,7 @@ class DraftCommands(CommandStrategy):
         }
         if "bot" in (settings["radiant"], settings["dire"]):
             settings["level"] = self._choose("Bot level", list(LEVELS), "normal")
+        settings["competitive"] = self._choose("Competitive, no hints", ["no", "yes"], "no") == "yes"
         return settings
 
     def _choose(self, question, options, default):
@@ -298,7 +302,7 @@ class SystemCommands(CommandStrategy):
         if args.option("again"):
             self.portraits.clear()
         heroes = self.game.pool.all()
-        if not self.portraits.missing(heroes):
+        if not self.portraits.missing(heroes) and not self.portraits.missing_icons():
             self.cli.info(f"All portraits are already in {self.portraits.root}")
             return
         self.cli.info("Downloading hero portraits...")
@@ -335,7 +339,7 @@ class SystemCommands(CommandStrategy):
                 self.cli.print(f"  {command.usage:<32}{command.summary}")
         self.cli.print()
         self.cli.info("new options: --mode=cm|ap --radiant=human|bot --dire=human|bot "
-                      "--first=radiant|dire --bot=easy|normal|hard")
+                      "--first=radiant|dire --bot=easy|normal|hard --competitive")
 
     def exit(self, args):
         raise ExitRequested

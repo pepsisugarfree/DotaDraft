@@ -20,6 +20,7 @@ class App:
             source = CachedHeroSource(client, JsonFiles(data_dir / "cache"))
             portraits = PortraitCache(client, data_dir / "images")
         self.source = source
+        self.portraits = portraits
         pool = HeroPool(source)
         store = JsonSaveStore(JsonFiles(data_dir / "saves"))
         self.game = DraftGame(pool, Matchups(source, pool), store, rng)
@@ -65,7 +66,8 @@ class App:
             self.cli.error(f"Couldn't load the last draft: {error}")
 
     def autosave(self):
-        if self.game.draft is not None:
+        """Saves the draft on exit, but not one where nobody has made a step yet."""
+        if self.game.draft is not None and self.game.draft.steps:
             self.game.save(AUTOSAVE)
 
     def run(self):

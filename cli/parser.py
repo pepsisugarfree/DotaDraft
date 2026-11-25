@@ -20,7 +20,7 @@ class Args:
 
 
 class ArgParser:
-    """Splits 'add pikachu "mr-mime" --force' into a command name, arguments and options.
+    """Splits 'pick "crystal maiden" --pos=5' into a command name, arguments and options.
 
     Options look like --flag or --key=value.
     """

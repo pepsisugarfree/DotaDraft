@@ -192,10 +192,13 @@ def test_download_all_portraits(tmp_path):
     cache.portrait(heroes[0])
     progress = []
     assert cache.download_all(heroes, lambda done, total: progress.append((done, total))) == len(heroes) - 1
-    assert progress[-1] == (len(heroes) - 1, len(heroes) - 1)
-    assert cache.missing(heroes) == []
+    assert progress[-1] == (len(heroes) + 3, len(heroes) + 3)  # and the 4 attribute icons
+    assert cache.missing(heroes) == [] and cache.missing_icons() == []
+    assert cache.cached_icon("agi") == tmp_path / "icons" / "agility.png"
+    assert "hero_agility.png" in " ".join(client.downloads)
     cache.clear()
-    assert cache.missing(heroes) == heroes
+    assert cache.missing(heroes) == heroes and len(cache.missing_icons()) == 4
+    assert cache.cached_icon("agi") is None
 
 
 def test_client_downloads_bytes(monkeypatch):

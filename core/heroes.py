@@ -63,7 +63,11 @@ class PortraitStore(ABC):
 
     @abstractmethod
     def portrait(self, hero):
-        """Path to the picture, or None if the hero has none."""
+        """Path to the picture, downloaded if needed, or None if the hero has none."""
+
+    @abstractmethod
+    def cached(self, hero):
+        """Path to the picture only if it is already downloaded, else None."""
 
 
 def simplify(text):

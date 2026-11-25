@@ -8,6 +8,7 @@ from core.rendering import Renderable
 
 # Points are made so that 1 point of difference is about 1% of win chance.
 POINTS_PER_LOG_ODDS = 25
+EVEN_DRAFT = 0.02
 STRENGTH_WEIGHT = 0.5  # half of a hero's winrate is the hero, half is who likes to play it
 POSITION_PENALTY = 10  # a position nobody in the team can play costs 10 points
 
@@ -61,6 +62,11 @@ class DraftEvaluation(Renderable):
     @property
     def winner(self):
         return RADIANT if self.radiant_chance >= 0.5 else DIRE
+
+    @property
+    def is_even(self):
+        """48-52% is a draw: then it's up to the players."""
+        return abs(self.radiant_chance - 0.5) < EVEN_DRAFT
 
     def score(self, team):
         return self.radiant if team == RADIANT else self.dire

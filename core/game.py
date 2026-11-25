@@ -35,9 +35,10 @@ class DraftGame:
         self.draft = None
         self.players = {RADIANT: "human", DIRE: "bot"}
         self.bot = DraftBot(self.evaluator, pool, "normal", rng)
+        self.competitive = False  # no hints for the players
         self._result_written = False
 
-    def new(self, format_key="cm", radiant="human", dire="bot", first=RADIANT, level="normal"):
+    def new(self, format_key="cm", radiant="human", dire="bot", first=RADIANT, level="normal", competitive=False):
         if format_key not in FORMATS:
             raise ValueError(f"Format is one of: {', '.join(FORMATS)}.")
         for player in (radiant, dire):
@@ -46,6 +47,7 @@ class DraftGame:
         self.bot = DraftBot(self.evaluator, self.pool, level, self.rng)
         self.draft = Draft(FORMATS[format_key], first)
         self.players = {RADIANT: radiant, DIRE: dire}
+        self.competitive = competitive
         self._result_written = False
         return self.draft
 
@@ -66,8 +68,16 @@ class DraftGame:
         self._write_result_if_over()
         return step
 
+    def check_hints(self):
+        """In a competitive draft the players think by themselves: no suggestions
+        and the bot doesn't make steps for them."""
+        if self.competitive:
+            raise ValueError("Hints are off in a competitive draft.")
+
     def bot_move(self):
         """The bot makes the current step (also used as a hint for a human: 'auto')."""
+        if not self.is_bot_turn:
+            self.check_hints()
         action, hero = self.bot.choose(self.current())
         step = self.draft.make(action, hero.id)
         self._write_result_if_over()
@@ -99,6 +109,7 @@ class DraftGame:
         draft = self.current()
         if draft.is_finished:
             raise ValueError("The draft is over.")
+        self.check_hints()
         team, action = draft.turn
         target = team if action == "pick" else other(team)
         return self.bot.suggestions(draft, target, count)
@@ -128,6 +139,7 @@ class DraftGame:
             "draft": self.current().to_dict(),
             "players": self.players,
             "level": self.bot.level,
+            "competitive": self.competitive,
             "result_written": self._result_written,
         })
 
@@ -138,6 +150,7 @@ class DraftGame:
         self.draft = Draft.from_dict(data["draft"])
         self.players = data["players"]
         self.bot = DraftBot(self.evaluator, self.pool, data["level"], self.rng)
+        self.competitive = data.get("competitive", False)  # saves made before this mode have no key
         self._result_written = data["result_written"]
         return self.draft
 

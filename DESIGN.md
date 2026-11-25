@@ -27,11 +27,11 @@ In Dota 2, before a match two teams (Radiant and Dire) take turns banning and pi
 
 The app simulates this draft. Each team is played by a human or a bot. When the draft is over, the app compares the two drafts and says who "outdrafted" whom and with what chance. Drafts can be saved and continued later. Results of finished drafts are kept.
 
-Right now the app has a console interface. A graphical interface will be added later on top of the same core.
+The app has two interfaces on top of the same core: a console and a window with hero cards, the draft board and the game text.
 
 ### 1.3 Overview
 
-Section 3 shows the layers and how they talk to each other, section 4 shows the data, section 5 explains the math of the draft score and the bot. Section 6 describes the console interface in detail.
+Section 3 shows the layers and how they talk to each other, section 4 shows the data, section 5 explains the math of the draft score and the bot. Section 6 describes the console and the window in detail.
 
 ### 1.4 Reference Material
 
@@ -64,7 +64,8 @@ The app has three layers, like in the course diagram:
 ```mermaid
 flowchart LR
     CLI[cli - presentation] --> CORE[core - business logic]
-    GUI[gui - later] -.-> CORE
+    GUI[gui - presentation] --> CLI
+    GUI --> CORE
     DATA[data - persistence] -. implements interfaces of .-> CORE
     DATA --> API[(OpenDota API)]
     DATA --> FILES[(JSON files)]
@@ -73,6 +74,7 @@ flowchart LR
 - **core** - heroes, matchups, positions, draft rules, evaluation, bot, saves logic. It doesn't import anything from `cli` or `data`.
 - **data** - OpenDota client, JSON parsing, cache and save files. It implements `HeroSource` and `SaveStore` from the core.
 - **cli** - console interface: parser, commands, renderers, colors and tables.
+- **gui** - window on tkinter: the draft page with the hero grid, the board with portraits, the console, the hero cards, the hero page and saves. Clicks become the same commands as in the console and go to the `CLI`; the board and the cards are read from the core.
 - **app.py** - creates all the objects and connects them.
 
 ### 3.2 Decomposition Description
@@ -182,6 +184,134 @@ classDiagram
     PortraitCache o-- OpenDotaClient
 ```
 
+Window interface:
+
+```mermaid
+classDiagram
+    class MainWindow {
+        app
+        images
+        busy
+        +run_command(line)
+        +poll()
+        +open_hero(hero_id)
+        +close()
+    }
+    class WindowConsole {
+        messages
+        +write(text)
+        +read_line(prompt)
+        +post(message)
+        +take()
+    }
+    class DraftPage {
+        selected
+        +select(hero_id)
+        +make_step()
+        +refresh()
+        +set_busy(busy)
+    }
+    class NewDraftPage {
+        +start()
+    }
+    class HeroesPage {
+        +load()
+        +draw()
+    }
+    class HeroPage {
+        +show(hero)
+        +choose()
+    }
+    class SavesPage {
+        +refresh()
+        +load_selected()
+        +save()
+    }
+    class HeroGrid {
+        +show(cards, states, query)
+        +select(hero_id)
+    }
+    class SidePanel {
+        +show_hero(card, state)
+        +show_suggestions(title, lines)
+        +show_result(score)
+    }
+    class TeamBoard {
+        +show(team_view, turn)
+    }
+    class WindowText["gui.Console"] {
+        question
+        +write(text)
+        +ask(prompt, answer_box)
+        +send()
+    }
+    class Timeline {
+        +show(dots)
+    }
+    class HeroRows {
+        +show(lines)
+    }
+    class RoundButton {
+        +configure_button(text, kind, enabled)
+        +click()
+    }
+    class RoundFrame
+    class PillGroup {
+        +get()
+        +set(value)
+    }
+    class Images {
+        +get(path, width)
+    }
+    Console <|-- WindowConsole
+    MainWindow o-- App
+    MainWindow *-- DraftPage
+    MainWindow *-- NewDraftPage
+    MainWindow *-- HeroesPage
+    MainWindow *-- HeroPage
+    MainWindow *-- SavesPage
+    MainWindow o-- WindowConsole
+    MainWindow o-- Images
+    DraftPage *-- Timeline
+    DraftPage *-- TeamBoard
+    DraftPage *-- HeroGrid
+    DraftPage *-- SidePanel
+    DraftPage *-- WindowText
+    SidePanel *-- HeroRows
+    SidePanel *-- PillGroup
+    HeroPage *-- HeroRows
+    RoundFrame <|-- TeamBoard
+    RoundFrame <|-- WindowText
+```
+
+`gui.Console` is the text field with the command line on the draft page; `Console` is the cli class the text comes from.
+
+View models (`gui/view_models.py`, no tkinter inside): `HeroCard`, `HeroPage` with three lists of `HeroLine`s, `BoardView` with two `TeamView`s of five `Slot`s, `StepDot`s of the timeline and `ScoreView` of a finished draft. They are made from the core by `hero_cards(pool, portraits, position, attribute, text)`, `hero_sections(cards)` (split by attribute), `hero_page(game, hero, portraits)`, `board_view(game, portraits)`, `timeline(draft)`, `hero_states(draft)` (who is picked or banned and by whom), `suggestion_lines(game, portraits, count)` and `score_view(game)`; the widgets only copy their fields to the screen.
+
+What happens when the user clicks Axe in the hero grid and then "PICK  Axe":
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant W as MainWindow
+    participant T as background thread
+    participant C as CLI
+    participant Q as WindowConsole
+    U->>W: click Axe in the grid
+    W->>W: select(): gold frame, Axe in the side panel, button "PICK  Axe"
+    U->>W: click "PICK  Axe" (position 3)
+    W->>W: write '> pick "Axe" --pos=3', turn the buttons off
+    W->>T: start
+    T->>C: exec_command('pick "Axe" --pos=3')
+    C->>Q: write(steps, board, score)
+    T->>Q: post("done")
+    loop every 40 ms
+        W->>Q: take()
+        W->>W: text into the console
+    end
+    W->>W: "done": board, timeline, grid marks, suggestions, buttons on
+```
+
 What happens on `pick axe` when Dire is a bot:
 
 ```mermaid
@@ -205,10 +335,18 @@ sequenceDiagram
 ### 3.3 Design Rationale
 
 - **Strategies in a CLI facade.** Commands are split into three groups the way the task suggests: output (Info), actions that change the game (Draft) and infrastructure (System). A new group is a new class plus one `use_strategy` call, the CLI itself doesn't change. The CLI refuses a command name that two strategies register.
-- **Renderable + Renderer.** I picked the second variant from the task: core classes are `Renderable`, the `Renderer` interface is also in the core, and the CLI implements it. The core knows nothing about colors or tables, and the GUI will set its own renderers later.
+- **Renderable + Renderer.** I picked the second variant from the task: core classes are `Renderable`, the `Renderer` interface is also in the core, and the CLI implements it. The core knows nothing about colors or tables. The window's game text uses the same renderers with colors off, and its board and cards are built from view models.
 - **Interfaces for data.** The core defines `HeroSource`, `SaveStore` and `PortraitStore`, the data layer implements them. The tests use a fake source with 26 heroes and made-up matchups, without internet.
-- **Console abstraction.** `Console` has `TerminalConsole` and `MemoryConsole`, so the whole CLI is tested with prepared input.
+- **Console abstraction.** `Console` has `TerminalConsole`, `MemoryConsole` and `WindowConsole`, so the whole CLI is tested with prepared input and also works inside the window.
+- **tkinter for the window.** It comes with Python, so the app still needs no extra packages and is easy to build into one file. Tk 8.6 opens PNG, so the portraits from 4.2 are shown as they are. tkinter can only zoom and shrink a picture by whole numbers, so `scaled()` turns the needed width into a fraction: 256 -> 128 is "shrink 2", 256 -> 86 is "shrink 3". Most portraits on Valve's server are 256 wide, but a few (Drow Ranger) are 128; for them the same widths are "zoom 1" and "zoom 2, shrink 3", so every hero has the same size.
+- **No pop-up windows.** The new draft settings, the hero cards, the page of a hero and the saves are pages under one bar, like tabs of a website. A question of a command is answered in the console line, like in a real console. So the user always stays in one window.
+- **Clicks first, the console second.** The draft page looks like the draft screen of the game: all heroes as small pictures in four groups by attribute with the attribute icons of the game, picked heroes dark with a bar in the team color and banned ones gray. A click on a hero shows it in the side panel with one big button for the current step ("PICK  Axe" / "BAN  Axe") and a choice of the position; a double click makes the step at once. The best heroes for the step are listed under it, a click on one chooses it. So a whole draft can be played without typing. The console stays under the grid for the text of the game and for all other commands, and can be hidden with a button.
+- **Round corners drawn on a Canvas.** Tk widgets are always square, so buttons (`RoundButton`), groups of options (`PillGroup`) and cards (`RoundFrame`) are canvases (`round_rect`). Tk draws curves without smoothing, so a corner is a small picture where every pixel is as see-through as much of it lies outside the circle (4 x 4 points are checked in each pixel). `put()` of Tk 8.6 can't set transparency, but Tk reads it from a PNG, so `png_image()` writes such a PNG in memory (`struct` + `zlib`, no extra packages). The rest of the shape is plain rectangles. Hero pictures stay square, like in the game. Tall portraits like in the game were tried too: Valve has them only as JPG (Tk 8.6 can't open it) or as full renders of 1.6 MB a hero, and cutting them from the wide portrait cut the heroes, so the grid uses the wide ones. A taken hero is made dark with a half see-through PNG over it (`shade`), a banned one is also made gray (`Images.gray`: Tk's `palette` option with one number turns a picture into shades of gray). Small pictures are shrunk by averaging the pixels under each new pixel (`resized`): tkinter's own `subsample` just drops pixels, which made the small pictures and icons look torn. The pictures of the grid and the line of steps are made that way (`Images.small`); it takes ~10 ms a hero in Python, so they are saved to `images/tiles/` and the next start only loads them. Many heroes are drawn on one canvas (`HeroGrid`, `HeroRows`, the cards of the Heroes page) instead of one widget each, which is much faster; under the mouse only the two tiles that changed are drawn again, and the suggestions are counted once a step, not on every click, so the frame follows the mouse without a delay.
+- **Dark theme in midnight blue** (`#2f3a4f`, rgb 47 58 79) with gold for the main buttons and the open page, green for Radiant and red for Dire. ttk's built-in `clam` theme is the only one that lets you change the colors of all widgets, so `apply_theme()` sets it up; the colors are constants in `gui/widgets.py`.
+- **The window is a shell over the CLI.** Every button becomes a command (`New draft` -> `new --mode=ap --dire=bot ...`, `Load` -> `load "name"`), so the rules, checks and error messages are written once. The window itself only shows the board, cards and text. This is the event-driven model: widgets call functions on clicks, and the window reads the new state after each command.
+- **Background thread + queue.** Downloading stats (~30 s) or portraits must not freeze the window, so commands run in a thread. tkinter may only be used from the main thread, so `WindowConsole` never touches widgets: it puts text into a `queue.Queue`, and the window takes it out every 40 ms with `after()`. A question of a command (`new` without options) goes the same way: the thread waits for the answer, the window prints the question in the game text, the next line typed there is put back as the answer (Escape cancels). While a command runs, the buttons are turned off, so two commands never run at once.
 - **Divine+ public matches of the current patch, counted on OpenDota's side.** OpenDota's `/heroes/{id}/matchups` has only pro matches (20-100 games per pair) and doesn't care about the patch. Instead the app sends SQL to OpenDota's explorer and lets their database count every pair of heroes - against each other and in one team - in public matches since the current patch came out, with an average rank of Divine or higher (`avg_rank_tier >= 70`, ~8% of all games). Low ranks were left out on purpose: there a draft matters less than how people play. A query is limited to 15 seconds, so the matches are split into windows of 800 000 match ids, two queries per window (~30 seconds). After the first week of patch 7.42 that is ~300 000 matches; a usual pair has ~650 games. It is downloaded once on the first start and then with `refresh`.
+- **Competitive mode is a rule of the game, so it is in the core.** `DraftGame.competitive` is set by `new(..., competitive=True)` and saved with the draft; `check_hints()` is called by `suggestions()` and by `bot_move()` on a human step. So the console, the window and any future interface can't show a hint by mistake - they get the same error ("Hints are off in a competitive draft."). The score at the end is still shown: it is the result, not a hint.
 - **Saves keep steps, not the board.** A draft is saved as its list of steps, the board is rebuilt from it. This also gives the history of steps for free.
 
 ## 4 Data Design
@@ -221,9 +359,11 @@ All files are in `~/.dotadraft` (or the folder given with `--data=DIR`). A folde
 |---|---|
 | `cache/heroes.json` | parsed `/heroStats`: id, name, attribute, attack type, aliases, image link (Valve's role tags are not used); plus games per lane from `/scenarios/laneRoles` (4 requests, one per lane) |
 | `cache/patch.json` | version, patch name, its start time, number of matches, `pairs` - `[hero, enemy, games, wins]` and `allies` - `[hero, ally, games together, wins together]` from Divine+ matches of the patch |
-| `saves/<name>.json` | one saved draft; `autosave` is written on exit and loaded on start |
+| `saves/<name>.json` | one saved draft; `autosave` is written on exit (only if the draft has at least one step) and loaded on start |
 | `saves/_results.json` | results of all finished drafts |
 | `images/<key>.png` | hero portraits from Valve's CDN (`skeleton_king.png`, ~70 KB each, ~9 MB for all heroes) |
+| `images/icons/<attribute>.png` | the four attribute icons of the game (strength, agility, intelligence, universal) |
+| `images/tiles/<key>_<width>.png` | small smooth pictures for the hero grid and the line of steps, made by the window from the portraits; made again if the portrait is newer |
 
 Save example:
 
@@ -233,6 +373,7 @@ Save example:
             "steps": [["radiant", "ban", 48, null], ["radiant", "pick", 14, 4]]},
   "players": {"radiant": "human", "dire": "bot"},
   "level": "normal",
+  "competitive": false,
   "result_written": false
 }
 ```
@@ -259,7 +400,7 @@ Rules for all of them:
 - **Atomic writes.** A file is written as `.tmp` first and then renamed over the old one, so a crash or Ctrl+C never leaves half a file.
 - **Cache version.** `heroes.json` and `patch.json` have `"version": 6`. When the format changes, the number is raised and old files are downloaded again instead of crashing. `Hero.from_dict` also ignores fields it doesn't know.
 - **A save keeps the steps, not the board.** `Draft.to_dict` writes the format, who picks first and the list of steps; `Draft.from_dict` builds the draft again from them. Players, bot level and whether the result was written are saved next to it, so after `load` the game goes on from the same step.
-- **Continue from the last save.** On start the app loads `autosave`. If that draft is not over, it says "Continuing the last draft".
+- **Continue from the last save.** On start the app loads `autosave`. It is written on exit only when somebody has made a step: a draft that was started but not touched is not worth continuing. If that draft is not over, it says "Continuing the last draft".
 - **Portraits are a buffer.** `PortraitCache.portrait(hero)` returns the local file. Only if there is no file, it downloads the picture, checks that it really is a PNG and writes it. Each picture is downloaded once, and the app works offline with them later. A new hero of a new patch is downloaded the first time it is shown. `portraits --again` deletes the pictures and downloads them all again (if Valve changes the art).
 - **Names starting with `_`** are reserved for the app's own files (`_results`), the user can't save or load them.
 
@@ -449,8 +590,9 @@ DraftGame.undo():
 ### 6.1 Overview of User Interface
 
 ```
-python main.py                     interactive mode
-python main.py counters pudge      one command and quit
+python main.py                     the window
+python main.py --console           interactive mode in the terminal
+python main.py counters pudge      one command in the terminal and quit
 --data=DIR                         other folder for saves and cache
 --no-color                         without colors
 ```
@@ -497,6 +639,18 @@ Key synergies:
 Radiant outdrafted Dire!
 ```
 
+Window:
+
+![Draft page](docs/gui_draft.png)
+
+![Finished draft](docs/gui_result.png)
+
+![New draft page](docs/gui_new_draft.png)
+
+![Heroes page](docs/gui_heroes.png)
+
+![Hero page](docs/gui_hero.png)
+
 ### 6.3 Screen Objects and Actions
 
 | Group | Command | What it does |
@@ -508,17 +662,35 @@ Radiant outdrafted Dire!
 | | `board` / `history` | current draft / all steps |
 | | `score` | the table from 5.3 for the current draft |
 | | `results` | finished drafts with Radiant's chance |
-| Draft | `new [options]` | new draft; options `--mode=cm\|ap --radiant=human\|bot --dire=human\|bot --first=radiant\|dire --bot=easy\|normal\|hard`, without options asks questions |
+| Draft | `new [options]` | new draft; options `--mode=cm\|ap --radiant=human\|bot --dire=human\|bot --first=radiant\|dire --bot=easy\|normal\|hard --competitive`, without options asks questions |
 | | `pick <hero> [--pos=1-5]` / `ban <hero>` | a step of the human team |
 | | `suggest [count]` | best heroes for this step with their gain |
 | | `auto` | the bot makes this step |
+| | `--competitive` | a draft without hints: `suggest` and `auto` for a human team give an error, the window hides the suggestions and turns off Bot step; bot teams still play; the mode is kept in the save |
 | | `undo` | take back the last human step |
 | System | `refresh` | download fresh stats of the current patch with a progress bar |
-| | `portraits [--again]` | download portraits of all heroes with a progress bar (~10 seconds); `--again` downloads them anew |
+| | `portraits [--again]` | download portraits of all heroes and the attribute icons with a progress bar (~10 seconds); `--again` downloads them anew |
 | | `save [name]` / `load [name]` / `saves` | named saves, default `autosave` |
 | | `help` / `exit` | command list / save and quit |
 
 Heroes are found by full name, part of the name, OpenDota aliases or initials: `am`, `sf`, `cm`, `jugg`, `"crystal maiden"`. If the text fits several heroes, the app lists them.
+
+**The window** (`python main.py`, the default way to start) has a bar on top with the pages Draft, Heroes, Hero (shown after a hero is opened, with its name) and Saves, and a status line on the right of the bar. There are no pop-up windows: buttons move between pages. Buttons, cards and pictures have round corners.
+
+| Element | Widget | What it does |
+|---|---|---|
+| Draft page, header | `Label`s, `Timeline` (`Canvas`), `RoundButton` x4 | whose step it is in the team color, mode and step number; the steps of each team in their order, a row for Radiant and a row for Dire like the top bar of the game: a done step shows the hero (gray for a ban), the current one has a gold frame, the next ones are boxes with P (pick) or B (ban); New draft (goes to the New draft page), Bot step (`auto`, off on a human step of a competitive draft), Undo, Console (hide / show) |
+| Board | two `TeamBoard`s, `ChanceMeter` (`Canvas`) | five positions of each team with portraits and names, "PICK NOW" / "BAN NOW" and a gold frame on the next free slot, gray pictures of the bans under them (hidden in All Pick, it has no bans); between the teams "VS", and when the draft is over the win chances with a red-green bar |
+| Hero grid | `HeroGrid` (`Canvas`), `Entry` | the main input: all heroes as 64 x 36 pictures in four groups with the attribute icons; the number of columns follows the width; picked heroes are dark with a bar in the team color, banned ones gray and dark; the hero under the mouse gets a light frame, the chosen one a gold frame; click chooses, double click makes the step; the Find field dims the heroes that don't match |
+| Side panel | `RoundFrame`s, `PillGroup`, `RoundButton`, `HeroRows` | the chosen hero (a click on its picture opens the hero page), position Auto / 1-5 for a pick, the big "PICK  Name" / "BAN  Name" button (turned off when the hero is taken or it's the bot's step), the best 4 heroes for this step (not in a competitive draft); when the draft is over - the score table, the key matchups and a New draft button |
+| Console | `Text` + `Scrollbar`, `Entry`, `RoundButton` | everything the console would print; commands typed here (Enter, Up/Down go through the history); answers to questions of a command (Escape cancels); commands are gold, errors red |
+| New draft page | `PillGroup` x6, `RoundButton` x2 | mode, who plays Radiant and Dire, first pick, bot level (only shown when a bot plays), competitive (no hints); "Start the draft" runs `new --mode=...` and goes back to the draft |
+| Heroes page | `PillGroup`, `Entry`, `Canvas` + `Scrollbar` | filter by position and name, the number of heroes shown; cards split into Strength, Agility, Intelligence and Universal: portrait, name, roles, attack type and traits, winrate in Divine+ games; a card lights up under the mouse, a click opens the hero page; the columns follow the window width, the mouse wheel scrolls |
+| Hero page | `RoundFrame`s, `Canvas` bars, `HeroRows` x3 | big portrait, attribute, roles, traits, winrate, lanes; "Choose in draft" (goes to the draft with this hero chosen) and Back; bars of the positions; three lists - who is good against the hero, whom it is good against, with whom it works well; a click on a hero there opens that hero |
+| Saves page | `Listbox`, `Entry`, `RoundButton` x2 | the list of saves; Load (or double click) loads the selected one; "Save the current draft as" field + Save (a click on a save puts its name into the field) |
+| Status line | `Label` | "Working...", progress of downloading portraits |
+
+On start the window loads the stats (downloads them the first time, the progress bar is drawn in the game text), continues `autosave` (with no autosave it opens on the New draft page) and downloads missing portraits in the background - cards get their pictures when it's done. Closing the window saves the draft like `exit`.
 
 Console-only elements are in `cli/graphics.py`: `Style` (ANSI colors, team and attribute colors, turned off when the output isn't a terminal), `Table` (columns are aligned even with color codes inside), bars and the progress bar.
 
@@ -551,3 +723,12 @@ Console-only elements are in `cli/graphics.py`: `Style` (ANSI colors, team and a
 | Hero portraits saved to local files, fewer requests to the server | `PortraitCache`, `OpenDotaClient.download`, command `portraits`, `hero` |
 | Server data cached between runs | `CachedHeroSource` with `cache/heroes.json` and `cache/patch.json` |
 | How it works is described in the document | 4.1 files, 4.2 persistence |
+
+| Requirement (practice 16, graphical interface) | Where |
+|---|---|
+| A window app made with a GUI library | tkinter (comes with Python), `MainWindow`, `python main.py` opens it (`--console` for the terminal) |
+| A scrollable list of hero cards with the portrait, name and short info | Heroes page: `HeroesPage`, view models `HeroCard`, `hero_sections`; the hero page `HeroPage`; the hero grid of the draft `HeroGrid` |
+| The window as a console for the game text | the console of the draft page (text field and command line), `WindowConsole` |
+| Main actions with buttons and clicks | `HeroGrid` + `SidePanel` (Pick / Ban, position, suggestions), header buttons, `NewDraftPage` |
+| Buttons to choose and load saves | `SavesPage`: the list with Load, the "Save as" field and Save |
+| GUI elements described in the document | 3.2 window classes and the click sequence, 3.3 why tkinter and threads, 6.1 the table of widgets, 6.2 screenshots |
